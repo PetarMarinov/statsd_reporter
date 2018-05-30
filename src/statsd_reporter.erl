@@ -2,8 +2,6 @@
 
 -behaviour(exometer_report).
 
--compile(export_all).
-
 -export([exometer_init/1,
          exometer_report/5,
          exometer_subscribe/5,
@@ -35,6 +33,8 @@ exometer_init(Opts) ->
             Error
     end.
 
+exometer_report(Metric, DataPoint, undefined, Value, State) ->
+    exometer_report(Metric, DataPoint, #{}, Value, State);
 exometer_report(Metric, DataPoint, Extra, Value, #state{tags = GlobalTags} = S) ->
     Name = format_name(Metric, DataPoint, Extra),
     Tags = maps:merge(GlobalTags, maps:get(tags, Extra, #{})),
