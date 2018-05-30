@@ -38,7 +38,8 @@ exometer_report(Metric, DataPoint, undefined, Value, State) ->
 exometer_report(Metric, DataPoint, Extra, Value, #state{tags = GlobalTags} = S) ->
     Name = format_name(Metric, DataPoint, Extra),
     Tags = maps:merge(GlobalTags, maps:get(tags, Extra, #{})),
-    Packet = [Name, $:, encode_value(Value), "|g" | encode_tags(Tags)],
+    Packet = [Name, $:, encode_value(Value), "|g" |
+              encode_tags(Tags, Metric, DataPoint)],
     gen_udp:send(S#state.socket, S#state.address, S#state.port, Packet),
     {ok, S}.
 
@@ -95,14 +96,23 @@ encode_value(X) when is_integer(X) ->
 encode_value(X) when is_float(X) ->
     erlang:float_to_binary(X).
 
-encode_tags(Tags) ->
+encode_tags(Tags, Metric, DataPoint) ->
     Encoder =
         fun(K, V, []) ->
-                [<<(encode_tag(K))/bytes, $:, (encode_tag(V))/bytes>>, "|#"];
+                Value = build_tag_value(V, Metric, DataPoint),
+                [<<(encode_tag(K))/bytes, $:, (encode_tag(Value))/bytes>>, "|#"];
            (K, V, Acc) ->
-                [<<(encode_tag(K))/bytes, $:, (encode_tag(V))/bytes>>, $, | Acc]
+                Value = build_tag_value(V, Metric, DataPoint),
+                [<<(encode_tag(K))/bytes, $:, (encode_tag(Value))/bytes>>, $, | Acc]
         end,
     lists:reverse(maps:fold(Encoder, [], Tags)).
+
+build_tag_value(dp, _Metric, DataPoint) ->
+    DataPoint;
+build_tag_value({from_metric, X}, Metric, _) ->
+    lists:nth(X, Metric);
+build_tag_value(V, _, _) ->
+    V.
 
 encode_tag(X) ->
     binary:replace(ensure_binary(X), [<<":">>, <<",">>], <<"_">>, [global]).
