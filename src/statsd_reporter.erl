@@ -98,7 +98,7 @@ encode_value(X) when is_float(X) ->
 encode_tags(Tags) ->
     Encoder =
         fun(K, V, []) ->
-                [<<(encode_tag(K))/bytes, $:, (encode_tag(V))/bytes>>, $#];
+                [<<(encode_tag(K))/bytes, $:, (encode_tag(V))/bytes>>, "|#"];
            (K, V, Acc) ->
                 [<<(encode_tag(K))/bytes, $:, (encode_tag(V))/bytes>>, $, | Acc]
         end,
