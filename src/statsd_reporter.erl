@@ -37,9 +37,9 @@ exometer_report(Metric, DataPoint, undefined, Value, State) ->
     exometer_report(Metric, DataPoint, #{}, Value, State);
 exometer_report(Metric, DataPoint, Extra, Value, #state{tags = GlobalTags} = S) ->
     Name = format_name(Metric, DataPoint, Extra),
-    Tags = maps:merge(GlobalTags, maps:get(tags, Extra, #{})),
-    Packet = [Name, $:, encode_value(Value), "|g" |
-              encode_tags(Tags, Metric, DataPoint)],
+    Tags = construct_tags(Metric, DataPoint, GlobalTags, Extra),
+    Packet = statsd_metric:encode(
+               statsd_metric:new(Name, Value, gauge, #{tags => Tags})),
     gen_udp:send(S#state.socket, S#state.address, S#state.port, Packet),
     {ok, S}.
 
@@ -71,51 +71,35 @@ exometer_newentry(_entry, State) ->
 %% Internal Functions
 %%====================================================================
 format_name(Metric, DataPoint, #{series_name := {template, Temp}}) ->
-    Formatter = fun(X, []) ->
-                        [get_name_token(X, Metric, DataPoint)];
+    Formatter = fun(X, <<>>) ->
+                        get_name_token(X, Metric, DataPoint);
                    (X, Acc) ->
-                        [get_name_token(X, Metric, DataPoint), $. | Acc]
+                        <<Acc, $., (get_name_token(X, Metric, DataPoint))/bytes>>
                 end,
-    lists:reverse(lists:foldl(Formatter, [], Temp));
+    lists:foldl(Formatter, <<>>, Temp);
 format_name(_Metric, _DataPoint, #{series_name := Name}) ->
-    encode_name(Name);
+    ensure_binary(Name);
 format_name(Metric, DataPoint, _) ->
-    lists:map(fun(X) -> [encode_name(X), $.] end, Metric) ++
-        [encode_name(DataPoint)].
+    IOData = lists:map(fun(X) -> [ensure_binary(X), $.] end, Metric),
+    erlang:iolist_to_binary([IOData, ensure_binary(DataPoint)]).
 
 get_name_token(X, Metric, _DataPoint) when is_integer(X) ->
-    encode_name(lists:nth(X, Metric));
+    ensure_binary(lists:nth(X, Metric));
 get_name_token(dp, _Metric, DP) ->
-    encode_name(DP).
+    ensure_binary(DP).
 
-encode_name(Data) ->
-    binary:replace(ensure_binary(Data), [<<":">>, <<"|">>, <<"@">>], <<"_">>, [global]).
+construct_tags(Metric, DataPoint, Global, #{tags := Local}) ->
+    maps:map(fun(_K, V) -> extract_tag_value(V, Metric, DataPoint) end,
+             maps:merge(Global, Local));
+construct_tags(Metric, DataPoint, Global, _Extra) ->
+    maps:map(fun(_K, V) -> extract_tag_value(V, Metric, DataPoint) end, Global).
 
-encode_value(X) when is_integer(X) ->
-    erlang:integer_to_binary(X);
-encode_value(X) when is_float(X) ->
-    erlang:float_to_binary(X).
-
-encode_tags(Tags, Metric, DataPoint) ->
-    Encoder =
-        fun(K, V, []) ->
-                Value = build_tag_value(V, Metric, DataPoint),
-                [<<(encode_tag(K))/bytes, $:, (encode_tag(Value))/bytes>>, "|#"];
-           (K, V, Acc) ->
-                Value = build_tag_value(V, Metric, DataPoint),
-                [<<(encode_tag(K))/bytes, $:, (encode_tag(Value))/bytes>>, $, | Acc]
-        end,
-    lists:reverse(maps:fold(Encoder, [], Tags)).
-
-build_tag_value(dp, _Metric, DataPoint) ->
+extract_tag_value(dp, _Metric, DataPoint) ->
     DataPoint;
-build_tag_value({from_metric, X}, Metric, _) ->
+extract_tag_value({from_metric, X}, Metric, _) ->
     lists:nth(X, Metric);
-build_tag_value(V, _, _) ->
+extract_tag_value(V, _, _) ->
     V.
-
-encode_tag(X) ->
-    binary:replace(ensure_binary(X), [<<":">>, <<",">>], <<"_">>, [global]).
 
 ensure_binary(X) when is_atom(X) ->
     erlang:atom_to_binary(X, latin1);
